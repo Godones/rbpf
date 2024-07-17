@@ -16,7 +16,7 @@ fn main() {
         0xb4, 0x01, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, // mov32 r1, 2
         0x04, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, // add32 r0, 1
         0x0c, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // add32 r0, r1
-        0x95, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00  // exit and return r0
+        0x95, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // exit and return r0
     ];
 
     // We use helper `bpf_time_getns()`, which is similar to helper `bpf_ktime_getns()` from Linux
@@ -31,7 +31,7 @@ fn main() {
         0xb7, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // mov64 r1, 0
         0xb7, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // mov64 r1, 0
         0x85, 0x00, 0x00, 0x00, hkey, 0x00, 0x00, 0x00, // call helper <hkey>
-        0x95, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00  // exit and return r0
+        0x95, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // exit and return r0
     ];
 
     // Create a VM: this one takes no data. Load prog1 in it.
@@ -48,7 +48,8 @@ fn main() {
     // reimplement uptime in eBPF, in Rust. Because why not.
 
     vm.set_program(prog2).unwrap();
-    vm.register_helper(helpers::BPF_KTIME_GETNS_IDX, helpers::bpf_time_getns).unwrap();
+    vm.register_helper(helpers::BPF_KTIME_GETNS_IDX, helpers::bpf_time_getns)
+        .unwrap();
 
     let time;
 
@@ -64,12 +65,14 @@ fn main() {
         time = vm.execute_program().unwrap();
     }
 
-    let days    =  time / 10u64.pow(9)  / 60   / 60  / 24;
-    let hours   = (time / 10u64.pow(9)  / 60   / 60) % 24;
-    let minutes = (time / 10u64.pow(9)  / 60 ) % 60;
+    let days = time / 10u64.pow(9) / 60 / 60 / 24;
+    let hours = (time / 10u64.pow(9) / 60 / 60) % 24;
+    let minutes = (time / 10u64.pow(9) / 60) % 60;
     let seconds = (time / 10u64.pow(9)) % 60;
-    let nanosec =  time % 10u64.pow(9);
+    let nanosec = time % 10u64.pow(9);
 
-    println!("Uptime: {:#x} ns == {} days {:02}:{:02}:{:02}, {} ns",
-             time, days, hours, minutes, seconds, nanosec);
+    println!(
+        "Uptime: {:#x} ns == {} days {:02}:{:02}:{:02}, {} ns",
+        time, days, hours, minutes, seconds, nanosec
+    );
 }

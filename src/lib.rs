@@ -31,9 +31,9 @@
 
 extern crate byteorder;
 extern crate combine;
+extern crate log;
 #[cfg(feature = "std")]
 extern crate time;
-extern crate log;
 
 #[cfg(not(feature = "std"))]
 extern crate alloc;
@@ -50,6 +50,7 @@ extern crate cranelift_module;
 extern crate cranelift_native;
 
 use byteorder::{ByteOrder, LittleEndian};
+
 use crate::lib::*;
 
 mod asm_parser;
@@ -63,9 +64,9 @@ pub mod insn_builder;
 mod interpreter;
 #[cfg(all(not(windows), feature = "std"))]
 mod jit;
-mod verifier;
 #[cfg(not(feature = "std"))]
 mod no_std_error;
+mod verifier;
 
 /// Reexports all the types needed from the `std`, `core`, and `alloc`
 /// crates. This avoids elaborate import wrangling having to happen in every
@@ -78,45 +79,35 @@ pub mod lib {
         pub use std::*;
     }
 
-    pub use self::core::convert::TryInto;
-    pub use self::core::mem;
-    pub use self::core::mem::ManuallyDrop;
-    pub use self::core::ptr;
-
-    pub use self::core::{u32, u64, f64};
-
-    #[cfg(feature = "std")]
-    pub use std::println;
-
-    #[cfg(not(feature = "std"))]
-    pub use alloc::vec;
-    #[cfg(not(feature = "std"))]
-    pub use alloc::vec::Vec;
-    #[cfg(feature = "std")]
-    pub use std::vec::Vec;
-
-    #[cfg(not(feature = "std"))]
-    pub use alloc::string::{String, ToString};
-    #[cfg(feature = "std")]
-    pub use std::string::{String, ToString};
-
     // In no_std we cannot use randomness for hashing, thus we need to use
     // BTree-based implementations of Maps and Sets. The cranelift module uses
     // BTrees by default, hence we need to expose it twice here.
     #[cfg(not(feature = "std"))]
     pub use alloc::collections::{BTreeMap as HashMap, BTreeMap, BTreeSet as HashSet, BTreeSet};
+    #[cfg(not(feature = "std"))]
+    pub use alloc::format;
+    #[cfg(not(feature = "std"))]
+    pub use alloc::string::{String, ToString};
+    #[cfg(not(feature = "std"))]
+    pub use alloc::vec;
+    #[cfg(not(feature = "std"))]
+    pub use alloc::vec::Vec;
     #[cfg(feature = "std")]
     pub use std::collections::{BTreeMap, HashMap, HashSet};
+    #[cfg(feature = "std")]
+    pub use std::io::{Error, ErrorKind};
+    #[cfg(feature = "std")]
+    pub use std::println;
+    #[cfg(feature = "std")]
+    pub use std::string::{String, ToString};
+    #[cfg(feature = "std")]
+    pub use std::vec::Vec;
 
+    pub use self::core::{convert::TryInto, f64, mem, mem::ManuallyDrop, ptr, u32, u64};
     /// In no_std we use a custom implementation of the error which acts as a
     /// replacement for the io Error.
     #[cfg(not(feature = "std"))]
     pub use crate::no_std_error::{Error, ErrorKind};
-    #[cfg(feature = "std")]
-    pub use std::io::{Error, ErrorKind};
-
-    #[cfg(not(feature = "std"))]
-    pub use alloc::format;
 }
 
 /// eBPF verification function that returns an error if the program does not meet its requirements.

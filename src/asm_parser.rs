@@ -6,12 +6,14 @@
 
 //! This module parses eBPF assembly language source code.
 
-use combine::parser::char::{alpha_num, char, digit, hex_digit, spaces, string};
-use combine::stream::position::{self};
 #[cfg(feature = "std")]
 use combine::EasyParser;
 use combine::{
-    attempt, between, eof, many, many1, one_of, optional, sep_by, ParseError, Parser, Stream,
+    attempt, between, eof, many, many1, one_of, optional,
+    parser::char::{alpha_num, char, digit, hex_digit, spaces, string},
+    sep_by,
+    stream::position::{self},
+    ParseError, Parser, Stream,
 };
 
 use crate::lib::*;
@@ -116,15 +118,15 @@ pub fn parse(input: &str) -> Result<Vec<Instruction>, String> {
             Err(err) => Err(err.to_string()),
         }
     }
-
 }
 
 #[cfg(test)]
 mod tests {
 
+    use combine::Parser;
+
     use super::{ident, instruction, integer, operand, parse, register, Instruction, Operand};
     use crate::lib::*;
-    use combine::Parser;
 
     // Unit tests for the different kinds of parsers.
 
@@ -586,21 +588,19 @@ exit
     #[test]
     fn test_error_eof() {
         let expected_error;
-        #[cfg(feature = "std")] {
+        #[cfg(feature = "std")]
+        {
             expected_error = Err(
-                "Parse error at line: 1, column: 6\nUnexpected end of input\nExpected digit\n".to_string()
+                "Parse error at line: 1, column: 6\nUnexpected end of input\nExpected digit\n"
+                    .to_string(),
             );
         }
-        #[cfg(not(feature = "std"))] {
-            expected_error = Err(
-                "unexpected parse".to_string()
-            );
+        #[cfg(not(feature = "std"))]
+        {
+            expected_error = Err("unexpected parse".to_string());
         }
         // Unexpected end of input in a register name.
-        assert_eq!(
-            parse("lsh r"),
-            expected_error
-        );
+        assert_eq!(parse("lsh r"), expected_error);
     }
 
     /// When running without `std` the `EasyParser` provided by `combine`
@@ -609,21 +609,18 @@ exit
     #[test]
     fn test_error_unexpected_character() {
         let expected_error;
-        #[cfg(feature = "std")] {
+        #[cfg(feature = "std")]
+        {
             expected_error = Err(
                 "Parse error at line: 2, column: 1\nUnexpected `^`\nExpected letter or digit, whitespaces, `r`, `-`, `+`, `[` or end of input\n".to_string()
             );
         }
-        #[cfg(not(feature = "std"))] {
-            expected_error = Err(
-                "unexpected parse".to_string()
-            );
+        #[cfg(not(feature = "std"))]
+        {
+            expected_error = Err("unexpected parse".to_string());
         }
         // Unexpected character at end of input.
-        assert_eq!(
-            parse("exit\n^"),
-            expected_error
-        );
+        assert_eq!(parse("exit\n^"), expected_error);
     }
 
     #[test]
