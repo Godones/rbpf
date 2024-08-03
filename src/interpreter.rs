@@ -167,6 +167,12 @@ pub fn execute_program(
             ebpf::LD_DW_IMM => {
                 let next_insn = ebpf::get_insn(prog, insn_ptr);
                 insn_ptr += 1;
+                // reg[_dst] = ((insn.imm as u32) as u64) + ((next_insn.imm as u64) << 32);
+                log::warn!(
+                    "executing LD_DW_IMM, set reg[{}] to {:#x}",
+                    _dst,
+                    ((insn.imm as u32) as u64) + ((next_insn.imm as u64) << 32)
+                );
                 reg[_dst] = ((insn.imm as u32) as u64) + ((next_insn.imm as u64) << 32);
             }
 
@@ -191,7 +197,13 @@ pub fn execute_program(
                 reg[_dst] = unsafe {
                     #[allow(clippy::cast_ptr_alignment)]
                     let x = (reg[_src] as *const u8).offset(insn.off as isize) as *const u32;
-                    check_mem_load(x as u64, 4, insn_ptr)?;
+                    // check_mem_load(x as u64, 4, insn_ptr)?;
+                    log::warn!(
+                        "executing LD_W_REG, the ptr is REG:{} -> [{:#x}] + {:#x}",
+                        _src,
+                        reg[_src],
+                        insn.off
+                    );
                     x.read_unaligned() as u64
                 }
             }
@@ -244,7 +256,13 @@ pub fn execute_program(
             ebpf::ST_W_REG => unsafe {
                 #[allow(clippy::cast_ptr_alignment)]
                 let x = (reg[_dst] as *const u8).offset(insn.off as isize) as *mut u32;
-                check_mem_store(x as u64, 4, insn_ptr)?;
+                log::warn!(
+                    "executing ST_W_REG, the ptr is REG:{} -> [{:#x}] + {:#x}",
+                    _dst,
+                    reg[_dst],
+                    insn.off
+                );
+                // check_mem_store(x as u64, 4, insn_ptr)?;
                 x.write_unaligned(reg[_src] as u32);
             },
             ebpf::ST_DW_REG => unsafe {
