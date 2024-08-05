@@ -18,6 +18,9 @@ use byteorder::{ByteOrder, LittleEndian};
 
 use crate::lib::*;
 
+/// The maximum call depth is 8
+pub const RBPF_MAX_CALL_DEPTH: usize = 8;
+
 /// Maximum number of instructions in an eBPF program.
 pub const PROG_MAX_INSNS: usize = 1000000;
 /// Size of an eBPF instructions, in bytes.

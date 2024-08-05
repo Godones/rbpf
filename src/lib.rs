@@ -66,6 +66,7 @@ mod interpreter;
 mod jit;
 #[cfg(not(feature = "std"))]
 mod no_std_error;
+mod stack;
 mod verifier;
 
 /// Reexports all the types needed from the `std`, `core`, and `alloc`
@@ -1249,6 +1250,19 @@ impl<'a> EbpfVmRaw<'a> {
         function: fn(u64, u64, u64, u64, u64) -> u64,
     ) -> Result<(), Error> {
         self.parent.register_helper(key, function)
+    }
+
+    /// Register a set of built-in or user-defined helper functions in order to use them later from
+    /// within the eBPF program. The helpers are registered into a hashmap, so the `key` can be any
+    /// `u32`.
+    pub fn register_helper_set(
+        &mut self,
+        helpers: &BTreeMap<u32, fn(u64, u64, u64, u64, u64) -> u64>,
+    ) -> Result<(), Error> {
+        for (key, function) in helpers {
+            self.parent.register_helper(*key, *function)?;
+        }
+        Ok(())
     }
 
     /// Execute the program loaded, with the given packet data.

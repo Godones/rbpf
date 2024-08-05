@@ -5,10 +5,13 @@
 // Copyright 2016 6WIND S.A. <quentin.monnet@6wind.com>
 //      (Translation to Rust, MetaBuff/multiple classes addition, hashmaps for helpers)
 
-use ebpf;
+use ebpf::{self, Insn};
+use helpers::BPF_FUNC_MAPPER;
+use stack::StackFrame;
 
 use crate::lib::*;
 
+#[allow(unused)]
 fn check_mem(
     addr: u64,
     len: usize,
@@ -39,6 +42,11 @@ fn check_mem(
     )))
 }
 
+#[inline]
+fn do_jump(insn_ptr: &mut usize, insn: &Insn) {
+    *insn_ptr = (*insn_ptr as i16 + insn.off) as usize;
+}
+
 #[allow(unknown_lints)]
 #[allow(cyclomatic_complexity)]
 pub fn execute_program(
@@ -57,8 +65,8 @@ pub fn execute_program(
             "Error: No program set, call prog_set() to load one",
         ))?,
     };
-    let stack = vec![0u8; ebpf::STACK_SIZE];
-
+    let mut stacks = Vec::new();
+    let stack = StackFrame::new();
     // R1 points to beginning of memory area, R10 to stack
     let mut reg: [u64; 11] = [
         0,
@@ -73,17 +81,21 @@ pub fn execute_program(
         0,
         stack.as_ptr() as u64 + stack.len() as u64,
     ];
+    stacks.push(stack);
+
     if !mbuff.is_empty() {
         reg[1] = mbuff.as_ptr() as u64;
     } else if !mem.is_empty() {
         reg[1] = mem.as_ptr() as u64;
     }
 
-    let check_mem_load = |addr: u64, len: usize, insn_ptr: usize| {
-        check_mem(addr, len, "load", insn_ptr, mbuff, mem, &stack)
+    let check_mem_load = |_addr: u64, _len: usize, _insn_ptr: usize| -> Result<(), Error> {
+        // check_mem(addr, len, "load", insn_ptr, mbuff, mem, stacks.last().unwrap().as_slice())
+        Ok(())
     };
-    let check_mem_store = |addr: u64, len: usize, insn_ptr: usize| {
-        check_mem(addr, len, "store", insn_ptr, mbuff, mem, &stack)
+    let check_mem_store = |_addr: u64, _len: usize, _insn_ptr: usize| -> Result<(), Error> {
+        // check_mem(addr, len, "store", insn_ptr, mbuff, mem, stacks.last().unwrap().as_slice())
+        Ok(())
     };
 
     // Loop on instructions
@@ -93,10 +105,6 @@ pub fn execute_program(
         insn_ptr += 1;
         let _dst = insn.dst as usize;
         let _src = insn.src as usize;
-
-        let mut do_jump = || {
-            insn_ptr = (insn_ptr as i16 + insn.off) as usize;
-        };
 
         match insn.opc {
             // BPF_LD class
@@ -168,11 +176,11 @@ pub fn execute_program(
                 let next_insn = ebpf::get_insn(prog, insn_ptr);
                 insn_ptr += 1;
                 // reg[_dst] = ((insn.imm as u32) as u64) + ((next_insn.imm as u64) << 32);
-                log::warn!(
-                    "executing LD_DW_IMM, set reg[{}] to {:#x}",
-                    _dst,
-                    ((insn.imm as u32) as u64) + ((next_insn.imm as u64) << 32)
-                );
+                // log::warn!(
+                //     "executing LD_DW_IMM, set reg[{}] to {:#x}",
+                //     _dst,
+                //     ((insn.imm as u32) as u64) + ((next_insn.imm as u64) << 32)
+                // );
                 reg[_dst] = ((insn.imm as u32) as u64) + ((next_insn.imm as u64) << 32);
             }
 
@@ -197,13 +205,13 @@ pub fn execute_program(
                 reg[_dst] = unsafe {
                     #[allow(clippy::cast_ptr_alignment)]
                     let x = (reg[_src] as *const u8).offset(insn.off as isize) as *const u32;
-                    // check_mem_load(x as u64, 4, insn_ptr)?;
-                    log::warn!(
-                        "executing LD_W_REG, the ptr is REG:{} -> [{:#x}] + {:#x}",
-                        _src,
-                        reg[_src],
-                        insn.off
-                    );
+                    check_mem_load(x as u64, 4, insn_ptr)?;
+                    // log::warn!(
+                    //     "executing LD_W_REG, the ptr is REG:{} -> [{:#x}] + {:#x}",
+                    //     _src,
+                    //     reg[_src],
+                    //     insn.off
+                    // );
                     x.read_unaligned() as u64
                 }
             }
@@ -256,13 +264,7 @@ pub fn execute_program(
             ebpf::ST_W_REG => unsafe {
                 #[allow(clippy::cast_ptr_alignment)]
                 let x = (reg[_dst] as *const u8).offset(insn.off as isize) as *mut u32;
-                log::warn!(
-                    "executing ST_W_REG, the ptr is REG:{} -> [{:#x}] + {:#x}",
-                    _dst,
-                    reg[_dst],
-                    insn.off
-                );
-                // check_mem_store(x as u64, 4, insn_ptr)?;
+                check_mem_store(x as u64, 4, insn_ptr)?;
                 x.write_unaligned(reg[_src] as u32);
             },
             ebpf::ST_DW_REG => unsafe {
@@ -374,247 +376,300 @@ pub fn execute_program(
 
             // BPF_JMP class
             // TODO: check this actually works as expected for signed / unsigned ops
-            ebpf::JA => do_jump(),
+            ebpf::JA => do_jump(&mut insn_ptr, &insn),
             ebpf::JEQ_IMM => {
                 if reg[_dst] == insn.imm as u64 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JEQ_REG => {
                 if reg[_dst] == reg[_src] {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JGT_IMM => {
                 if reg[_dst] > insn.imm as u64 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JGT_REG => {
                 if reg[_dst] > reg[_src] {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JGE_IMM => {
                 if reg[_dst] >= insn.imm as u64 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JGE_REG => {
                 if reg[_dst] >= reg[_src] {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JLT_IMM => {
                 if reg[_dst] < insn.imm as u64 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JLT_REG => {
                 if reg[_dst] < reg[_src] {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JLE_IMM => {
                 if reg[_dst] <= insn.imm as u64 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JLE_REG => {
                 if reg[_dst] <= reg[_src] {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JSET_IMM => {
                 if reg[_dst] & insn.imm as u64 != 0 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JSET_REG => {
                 if reg[_dst] & reg[_src] != 0 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JNE_IMM => {
                 if reg[_dst] != insn.imm as u64 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JNE_REG => {
                 if reg[_dst] != reg[_src] {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JSGT_IMM => {
                 if reg[_dst] as i64 > insn.imm as i64 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JSGT_REG => {
                 if reg[_dst] as i64 > reg[_src] as i64 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JSGE_IMM => {
                 if reg[_dst] as i64 >= insn.imm as i64 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JSGE_REG => {
                 if reg[_dst] as i64 >= reg[_src] as i64 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JSLT_IMM => {
                 if (reg[_dst] as i64) < insn.imm as i64 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JSLT_REG => {
                 if (reg[_dst] as i64) < reg[_src] as i64 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JSLE_IMM => {
                 if reg[_dst] as i64 <= insn.imm as i64 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JSLE_REG => {
                 if reg[_dst] as i64 <= reg[_src] as i64 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
 
             // BPF_JMP32 class
             ebpf::JEQ_IMM32 => {
                 if reg[_dst] as u32 == insn.imm as u32 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JEQ_REG32 => {
                 if reg[_dst] as u32 == reg[_src] as u32 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JGT_IMM32 => {
                 if reg[_dst] as u32 > insn.imm as u32 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JGT_REG32 => {
                 if reg[_dst] as u32 > reg[_src] as u32 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JGE_IMM32 => {
                 if reg[_dst] as u32 >= insn.imm as u32 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JGE_REG32 => {
                 if reg[_dst] as u32 >= reg[_src] as u32 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JLT_IMM32 => {
                 if (reg[_dst] as u32) < insn.imm as u32 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JLT_REG32 => {
                 if (reg[_dst] as u32) < reg[_src] as u32 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JLE_IMM32 => {
                 if reg[_dst] as u32 <= insn.imm as u32 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JLE_REG32 => {
                 if reg[_dst] as u32 <= reg[_src] as u32 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JSET_IMM32 => {
                 if reg[_dst] as u32 & insn.imm as u32 != 0 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JSET_REG32 => {
                 if reg[_dst] as u32 & reg[_src] as u32 != 0 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JNE_IMM32 => {
                 if reg[_dst] as u32 != insn.imm as u32 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JNE_REG32 => {
                 if reg[_dst] as u32 != reg[_src] as u32 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JSGT_IMM32 => {
                 if reg[_dst] as i32 > insn.imm {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JSGT_REG32 => {
                 if reg[_dst] as i32 > reg[_src] as i32 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JSGE_IMM32 => {
                 if reg[_dst] as i32 >= insn.imm {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JSGE_REG32 => {
                 if reg[_dst] as i32 >= reg[_src] as i32 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JSLT_IMM32 => {
                 if (reg[_dst] as i32) < insn.imm {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JSLT_REG32 => {
                 if (reg[_dst] as i32) < reg[_src] as i32 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JSLE_IMM32 => {
                 if reg[_dst] as i32 <= insn.imm {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
             ebpf::JSLE_REG32 => {
                 if reg[_dst] as i32 <= reg[_src] as i32 {
-                    do_jump();
+                    do_jump(&mut insn_ptr, &insn);
                 }
             }
 
             // Do not delegate the check to the verifier, since registered functions can be
             // changed after the program has been verified.
             ebpf::CALL => {
-                if let Some(function) = helpers.get(&(insn.imm as u32)) {
-                    reg[0] = function(reg[1], reg[2], reg[3], reg[4], reg[5]);
-                } else {
-                    Err(Error::new(
-                        ErrorKind::Other,
-                        format!(
-                            "Error: unknown helper function (id: {:#x})",
-                            insn.imm as u32
-                        ),
-                    ))?;
+                // See https://www.kernel.org/doc/html/latest/bpf/standardization/instruction-set.html#id16
+                let src_reg = _src;
+                let call_func_res = match src_reg {
+                    0 => {
+                        // Handle call by address to external function.
+                        if let Some(function) = helpers.get(&(insn.imm as u32)) {
+                            reg[0] = function(reg[1], reg[2], reg[3], reg[4], reg[5]);
+                            Ok(())
+                        }else {
+                            Err(format!(
+                                "Error: unknown helper function (id: {:#x}) [{}], (instruction #{})",
+                                insn.imm as u32,BPF_FUNC_MAPPER[insn.imm as usize],insn_ptr
+                            ))
+                        }
+                    }
+                    1 => {
+                        // bpf to bpf call
+                        // The function is in the same program, so we can just jump to the address
+                        if stacks.len() >= ebpf::RBPF_MAX_CALL_DEPTH{
+                            Err(format!(
+                                "Error: bpf to bpf call stack limit reached (instruction #{}) max depth: {}",
+                                insn_ptr, ebpf::RBPF_MAX_CALL_DEPTH
+                            ))
+                        }else {
+                            let mut pre_stack = stacks.last_mut().unwrap();
+                            // Save the callee saved registers
+                            pre_stack.save_registers(&reg[6..=9]);
+                            // Save the return address
+                            pre_stack.save_return_address(insn_ptr as u16);
+                            // save the stack pointer
+                            pre_stack.save_sp(reg[10] as u16);
+                            let mut stack = StackFrame::new();
+                            log::trace!("BPF TO BPF CALL: new pc: {} + {} = {}",insn_ptr ,insn.imm,insn_ptr + insn.imm as usize);
+                            reg[10] = stack.as_ptr() as u64 + stack.len() as u64;
+                            stacks.push(stack);
+                            insn_ptr = insn_ptr + insn.imm as usize;
+                            Ok(())
+                        }
+                    }
+                    _ =>{
+                        Err(format!(
+                            "Error: the function call type (id: {:#x}) [{}], (instruction #{}) not supported",
+                            insn.imm as u32,BPF_FUNC_MAPPER[insn.imm as usize],insn_ptr
+                        ))
+                    }
+                };
+                if let Err(e) = call_func_res {
+                    Err(Error::new(ErrorKind::Other, e))?;
                 }
             }
             ebpf::TAIL_CALL => unimplemented!(),
-            ebpf::EXIT => return Ok(reg[0]),
+            ebpf::EXIT => {
+                if stacks.len() == 1 {
+                    return Ok(reg[0]);
+                } else {
+                    // Pop the stack
+                    stacks.pop();
+                    let stack = stacks.last().unwrap();
+                    // Restore the callee saved registers
+                    reg[6..=9].copy_from_slice(&stack.get_registers());
+                    // Restore the return address
+                    insn_ptr = stack.get_return_address() as usize;
+                    // Restore the stack pointer
+                    reg[10] = stack.get_sp() as u64;
+                    log::trace!("EXIT: new pc: {}", insn_ptr);
+                }
+            }
 
             _ => unreachable!(),
         }
